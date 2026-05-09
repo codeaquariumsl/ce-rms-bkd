@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS users (
 CREATE TABLE IF NOT EXISTS customers (
     id                INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
     organization_id   INT UNSIGNED NOT NULL,
+    nic               VARCHAR(20)  NOT NULL,
     name              VARCHAR(255) NOT NULL,
     email             VARCHAR(255),
     phone             VARCHAR(30)  NOT NULL,

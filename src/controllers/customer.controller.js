@@ -21,17 +21,17 @@ exports.getCustomers = async (req, res) => {
 
 exports.createCustomer = async (req, res) => {
     try {
-        const { org_id, name, phone, email, address, city, country } = req.body;
+        const { org_id, nic, name, phone, email, address, city, country } = req.body;
 
-        if (!org_id || !name || !phone) {
-            return res.status(400).json({ error: "Name and phone are required" });
+        if (!org_id || !name || !phone || !nic) {
+            return res.status(400).json({ error: "NIC, Name and phone are required" });
         }
 
         const result = await query(
             `INSERT INTO customers 
-             (organization_id, name, phone, email, address, city, country)
-             VALUES (?, ?, ?, ?, ?, ?, ?)`,
-            [org_id, name, phone, email, address, city, country]
+             (organization_id, nic, name, phone, email, address, city, country)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+            [org_id, nic, name, phone, email, address, city, country]
         );
 
         const newCustomer = await queryOne("SELECT * FROM customers WHERE id = ?", [result.insertId]);
