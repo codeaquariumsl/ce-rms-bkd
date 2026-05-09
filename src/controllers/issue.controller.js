@@ -186,9 +186,9 @@ exports.createIssue = async (req, res) => {
                             "INSERT INTO issue_item_serials (issue_item_id, serial_number_id) VALUES (?, ?)",
                             [issueItemId, serial.id]
                         );
-                        // Update serial status to Delivered
+                        // Update serial status to Reserved
                         await connection.execute(
-                            "UPDATE serial_numbers SET status = 'Delivered' WHERE id = ?",
+                            "UPDATE serial_numbers SET status = 'Reserved' WHERE id = ?",
                             [serial.id]
                         );
                     }
@@ -200,7 +200,7 @@ exports.createIssue = async (req, res) => {
                 `UPDATE inventory_items
                  SET quantity_available = GREATEST(quantity_available - ?, 0),
                      quantity_delivered = quantity_delivered + ?,
-                     status = 'Delivered'
+                     status = 'Reserved'
                  WHERE id = ?`,
                 [item.quantity, item.quantity, item.inventory_item_id]
             );
