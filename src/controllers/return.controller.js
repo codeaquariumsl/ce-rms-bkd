@@ -1,37 +1,49 @@
 const { query, queryOne, pool } = require('../config/db');
 
+
 // GET /api/returns
 exports.getReturns = async (req, res) => {
     try {
-        const { org_id, status, overdue } = req.query;
+        const { org_id } = req.query;
         if (!org_id) return res.status(400).json({ error: 'Organization ID is required' });
 
+        // Query active issues in 'Issued' status (Pending & Overdue returns)
         let queryStr = `
-            SELECT r.*, b.booking_number, b.return_date, b.total_amount,
-                   c.name as customer_name, c.phone as customer_phone,
-                   d.id as delivery_id, d.delivered_at,
-                   (SELECT COUNT(*) FROM booking_items WHERE booking_id = b.id) as item_count
-            FROM returns r
-            JOIN bookings b ON r.booking_id = b.id
-            JOIN customers c ON b.customer_id = c.id
-            LEFT JOIN deliveries d ON r.delivery_id = d.id
-            WHERE b.organization_id = ?
+            SELECT 
+                i.id,
+                i.issue_number as booking_number,
+                i.issue_date,
+                i.return_date as returnDate,
+                i.total_amount,
+                i.payment_status,
+                i.notes,
+                'Pending' as status,
+                'Good' as \`condition\`,
+                'N/A' as repairStatus,
+                c.name as customer_name,
+                c.phone as customer_phone,
+                GROUP_CONCAT(CONCAT(inv.name, ' (x', ii.quantity, ')') SEPARATOR ', ') as itemName
+            FROM issues i
+            JOIN customers c ON i.customer_id = c.id
+            LEFT JOIN issue_items ii ON i.id = ii.issue_id
+            LEFT JOIN inventory_items inv ON ii.inventory_item_id = inv.id
+            WHERE i.organization_id = ? AND i.status = 'Issued'
+            GROUP BY i.id
+            ORDER BY i.return_date ASC
         `;
         const values = [org_id];
 
-        if (status) {
-            queryStr += ' AND r.status = ?';
-            values.push(status);
-        }
-
-        if (overdue === 'true') {
-            queryStr += " AND DATE(b.return_date) < CURDATE() AND r.status != 'Returned'";
-        }
-
-        queryStr += ' ORDER BY b.return_date ASC';
-
         const returns = await query(queryStr, values);
-        res.json({ data: returns });
+        
+        // Map backend customer_name to customerName so the frontend renders it correctly
+        const mappedReturns = returns.map(item => ({
+            ...item,
+            customerName: item.customer_name,
+            customerPhone: item.customer_phone,
+            id: String(item.id)
+        }));
+
+        res.json({ data: mappedReturns });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
@@ -42,32 +54,35 @@ exports.getReturnById = async (req, res) => {
     try {
         const { id } = req.params;
 
-        const returnRecord = await queryOne(
-            `SELECT r.*, b.booking_number, b.customer_id, b.return_date, b.total_amount,
-                    c.name as customer_name, c.phone as customer_phone,
-                    u.name as returned_by_name
-             FROM returns r
-             JOIN bookings b ON r.booking_id = b.id
-             JOIN customers c ON b.customer_id = c.id
-             LEFT JOIN users u ON r.returned_by = u.id
-             WHERE r.id = ?`,
+        const issue = await queryOne(
+            `SELECT i.id, i.issue_number as booking_number, i.customer_id, i.return_date, i.total_amount, i.payment_status, i.notes, i.issue_date,
+                    c.name as customer_name, c.phone as customer_phone
+             FROM issues i
+             JOIN customers c ON i.customer_id = c.id
+             WHERE i.id = ?`,
             [id]
         );
 
-        if (!returnRecord) return res.status(404).json({ error: 'Return not found' });
+        if (!issue) return res.status(404).json({ error: 'Issue not found' });
 
         const items = await query(
-            `SELECT bi.*, ii.name, ii.sku, ii.status as item_status,
-                    dil.damage_description, dil.severity, dil.repair_status
-             FROM booking_items bi
-             JOIN inventory_items ii ON bi.inventory_item_id = ii.id
-             LEFT JOIN damaged_inventory_log dil 
-                   ON ii.id = dil.inventory_item_id AND dil.booking_id = ?
-             WHERE bi.booking_id = ?`,
-            [returnRecord.booking_id, returnRecord.booking_id]
+            `SELECT ii.*, inv.name, inv.sku, inv.status as item_status
+             FROM issue_items ii
+             JOIN inventory_items inv ON ii.inventory_item_id = inv.id
+             WHERE ii.issue_id = ?`,
+            [id]
         );
 
-        res.json({ data: { ...returnRecord, items } });
+        res.json({ 
+            data: { 
+                ...issue, 
+                items, 
+                bookingId: issue.booking_number, 
+                customerName: issue.customer_name, 
+                itemName: items.map(it => `${it.name} (x${it.quantity})`).join(', '), 
+                returnDate: issue.return_date 
+            } 
+        });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

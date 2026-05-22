@@ -37,6 +37,7 @@ v1Router.use('/categories', require('./routes/category.routes'));
 v1Router.use('/damaged-items', require('./routes/damage.routes'));
 v1Router.use('/notifications', require('./routes/notification.routes'));
 v1Router.use('/report', require('./routes/report.routes'));
+v1Router.use('/reports', require('./routes/report.routes'));
 v1Router.use('/barcode', require('./routes/barcode.routes'));
 v1Router.use('/logs', require('./routes/logs.routes'));
 v1Router.use('/serials', require('./routes/serial.routes'));

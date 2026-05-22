@@ -185,3 +185,53 @@ exports.getRentalHistoryReport = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+// GET /api/reports/customer-issues
+exports.getCustomerIssuesReport = async (req, res) => {
+    try {
+        const { org_id } = req.query;
+        if (!org_id) return res.status(400).json({ error: 'Organization ID is required' });
+
+        const report = await query(
+            `SELECT 
+                c.name as customer_name,
+                c.nic as customer_nic,
+                c.phone as customer_phone,
+                COUNT(i.id) as total_issues,
+                COALESCE(SUM(i.total_amount), 0) as total_amount,
+                COALESCE(SUM(CASE WHEN i.status = 'Issued' THEN 1 ELSE 0 END), 0) as issued_count,
+                COALESCE(SUM(CASE WHEN i.status = 'Returned' THEN 1 ELSE 0 END), 0) as returned_count,
+                COALESCE(SUM(CASE WHEN i.status = 'Returned Damaged' THEN 1 ELSE 0 END), 0) as returned_damaged_count,
+                COALESCE(SUM(CASE WHEN i.status = 'Cancelled' THEN 1 ELSE 0 END), 0) as cancelled_count
+             FROM customers c
+             LEFT JOIN issues i ON c.id = i.customer_id AND i.organization_id = ?
+             WHERE c.organization_id = ?
+             GROUP BY c.id, c.name, c.nic, c.phone
+             ORDER BY total_issues DESC, c.name ASC`,
+            [org_id, org_id]
+        );
+
+        // Calculate summary across all customers
+        const totalIssues = report.reduce((s, r) => s + (parseInt(r.total_issues) || 0), 0);
+        const totalAmount = report.reduce((s, r) => s + (parseFloat(r.total_amount) || 0), 0);
+        const totalIssued = report.reduce((s, r) => s + (parseInt(r.issued_count) || 0), 0);
+        const totalReturned = report.reduce((s, r) => s + (parseInt(r.returned_count) || 0), 0);
+        const totalReturnedDamaged = report.reduce((s, r) => s + (parseInt(r.returned_damaged_count) || 0), 0);
+        const totalCancelled = report.reduce((s, r) => s + (parseInt(r.cancelled_count) || 0), 0);
+
+        const summary = {
+            total_customers: report.length,
+            total_issues: totalIssues,
+            total_revenue: parseFloat(totalAmount.toFixed(2)),
+            issued_count: totalIssued,
+            returned_count: totalReturned,
+            returned_damaged_count: totalReturnedDamaged,
+            cancelled_count: totalCancelled
+        };
+
+        res.json({ data: report, summary });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+

@@ -69,16 +69,16 @@ exports.createIssue = async (req, res) => {
     await connection.beginTransaction();
 
     try {
-        const { 
-            org_id, 
-            customer_id, 
-            items, 
-            issue_date, 
-            return_date, 
-            payment_status, 
-            notes, 
+        const {
+            org_id,
+            customer_id,
+            items,
+            issue_date,
+            return_date,
+            payment_status,
+            notes,
             booking_id,
-            created_by 
+            created_by
         } = req.body;
 
         if (!org_id || !customer_id || !items?.length || !issue_date || !return_date) {
@@ -95,7 +95,7 @@ exports.createIssue = async (req, res) => {
                 'SELECT quantity_total FROM inventory_items WHERE id = ?',
                 [item.inventory_item_id]
             );
-            
+
             // Check overlapping Bookings
             const overlappingBookings = await query(
                 `SELECT b.delivery_date, b.return_date, bi.quantity
@@ -145,7 +145,22 @@ exports.createIssue = async (req, res) => {
         }
 
         // 2. Create Issue
-        const issueNumber = `ISS-${Date.now()}`;
+        const [lastIssues] = await connection.execute(
+            `SELECT issue_number FROM issues 
+             WHERE issue_number LIKE 'CE26%' 
+             ORDER BY id DESC LIMIT 1`
+        );
+
+        let nextNum = 1;
+        if (lastIssues && lastIssues.length > 0) {
+            const lastIssueNumber = lastIssues[0].issue_number;
+            const numPart = lastIssueNumber.replace('CE26', '');
+            const parsedNum = parseInt(numPart, 10);
+            if (!isNaN(parsedNum)) {
+                nextNum = parsedNum + 1;
+            }
+        }
+        const issueNumber = `CE26${String(nextNum).padStart(4, '0')}`;
         const [issueResult] = await connection.execute(
             `INSERT INTO issues
              (organization_id, customer_id, issue_number, booking_id, status, issue_date, return_date, payment_status, notes, created_by)
@@ -178,7 +193,7 @@ exports.createIssue = async (req, res) => {
             if (item.serial_codes && item.serial_codes.length > 0) {
                 for (const code of item.serial_codes) {
                     const serial = await queryOne(
-                        "SELECT id FROM serial_numbers WHERE serial_code = ? AND inventory_item_id = ?", 
+                        "SELECT id FROM serial_numbers WHERE serial_code = ? AND inventory_item_id = ?",
                         [code, item.inventory_item_id]
                     );
                     if (serial) {
@@ -225,17 +240,20 @@ exports.updateIssueStatus = async (req, res) => {
 
     try {
         const { id } = req.params;
-        const { status } = req.body;
+        const { status, return_date, payment_status, damage_notes } = req.body;
 
         if (!status) return res.status(400).json({ error: 'Status is required' });
 
         const issue = await queryOne('SELECT * FROM issues WHERE id = ?', [id]);
         if (!issue) return res.status(404).json({ error: 'Issue not found' });
 
-        // If transitioning to 'Returned', restore inventory
-        if (status === 'Returned' && issue.status !== 'Returned') {
+        const isReturnedStatus = status === 'Returned' || status === 'Returned Damaged';
+        const wasReturnedStatus = issue.status === 'Returned' || issue.status === 'Returned Damaged';
+
+        // If transitioning to a returned status, restore inventory / log damage
+        if (isReturnedStatus && !wasReturnedStatus) {
             const items = await query('SELECT * FROM issue_items WHERE issue_id = ?', [id]);
-            
+
             for (const item of items) {
                 // 1. Restore serial numbers
                 const serials = await query(
@@ -249,22 +267,80 @@ exports.updateIssueStatus = async (req, res) => {
                     );
                 }
 
-                // 2. Restore inventory item totals
-                await connection.execute(
-                    `UPDATE inventory_items 
-                     SET quantity_available = quantity_available + ?,
-                         quantity_delivered = GREATEST(quantity_delivered - ?, 0),
-                         status = 'Available'
-                     WHERE id = ?`,
-                    [item.quantity, item.quantity, item.inventory_item_id]
-                );
+                if (status === 'Returned Damaged') {
+                    // 2a. Log damage in damaged_inventory_log
+                    await connection.execute(
+                        `INSERT INTO damaged_inventory_log 
+                         (inventory_item_id, issue_id, damage_description, severity, repair_status)
+                         VALUES (?, ?, ?, 'Minor', 'Pending')`,
+                        [
+                            item.inventory_item_id,
+                            id,
+                            damage_notes || 'Returned Damaged via complete return.'
+                        ]
+                    );
+
+                    // 2b. Add to quantity_damaged instead of quantity_available
+                    await connection.execute(
+                        `UPDATE inventory_items 
+                         SET quantity_damaged = quantity_damaged + ?,
+                             quantity_delivered = GREATEST(quantity_delivered - ?, 0),
+                             status = 'Damaged'
+                         WHERE id = ?`,
+                        [item.quantity, item.quantity, item.inventory_item_id]
+                    );
+                } else {
+                    // 2c. Restore inventory item totals (Good condition return)
+                    await connection.execute(
+                        `UPDATE inventory_items 
+                         SET quantity_available = quantity_available + ?,
+                             quantity_delivered = GREATEST(quantity_delivered - ?, 0),
+                             status = 'Available'
+                         WHERE id = ?`,
+                        [item.quantity, item.quantity, item.inventory_item_id]
+                    );
+                }
             }
         }
 
-        await connection.execute('UPDATE issues SET status = ? WHERE id = ?', [status, id]);
+        let returnDateToUpdate = issue.return_date;
+        let totalAmountToUpdate = issue.total_amount;
+        let paymentStatusToUpdate = payment_status || issue.payment_status;
+
+        // If returning, we update dates and recalculate price
+        if (isReturnedStatus && return_date) {
+            returnDateToUpdate = return_date;
+            
+            const d1 = new Date(issue.issue_date);
+            const d2 = new Date(return_date);
+            const utc1 = Date.UTC(d1.getFullYear(), d1.getMonth(), d1.getDate());
+            const utc2 = Date.UTC(d2.getFullYear(), d2.getMonth(), d2.getDate());
+            const rentalDays = Math.max(Math.ceil((utc2 - utc1) / (1000 * 60 * 60 * 24)), 1);
+
+            const items = await query('SELECT * FROM issue_items WHERE issue_id = ?', [id]);
+            let calculatedTotal = 0;
+            for (const item of items) {
+                calculatedTotal += Number(item.price) * item.quantity * rentalDays;
+            }
+            totalAmountToUpdate = calculatedTotal;
+        }
+
+        await connection.execute(
+            'UPDATE issues SET status = ?, return_date = ?, total_amount = ?, payment_status = ? WHERE id = ?',
+            [status, returnDateToUpdate, totalAmountToUpdate, paymentStatusToUpdate, id]
+        );
 
         await connection.commit();
-        res.json({ message: 'Issue status updated successfully' });
+        res.json({ 
+            message: 'Issue status updated successfully',
+            data: {
+                id,
+                status,
+                return_date: returnDateToUpdate,
+                total_amount: totalAmountToUpdate,
+                payment_status: paymentStatusToUpdate
+            }
+        });
     } catch (error) {
         await connection.rollback();
         res.status(500).json({ error: error.message });

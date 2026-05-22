@@ -8,10 +8,12 @@ exports.getDamagedItems = async (req, res) => {
 
         let queryStr = `
             SELECT dil.*, ii.name, ii.sku, ii.barcode, ii.status as item_status,
-                   u.name as reported_by_name
+                   u.name as reported_by_name,
+                   iss.issue_number
             FROM damaged_inventory_log dil
             JOIN inventory_items ii ON dil.inventory_item_id = ii.id
             LEFT JOIN users u ON dil.reported_by = u.id
+            LEFT JOIN issues iss ON dil.issue_id = iss.id
             WHERE ii.organization_id = ?
         `;
         const values = [org_id];
