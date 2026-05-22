@@ -38,7 +38,7 @@ exports.getIssueDetails = async (req, res) => {
         const { id } = req.params;
 
         const issue = await queryOne(
-            `SELECT i.*, c.name as customer_name, c.phone as customer_phone, c.email as customer_email
+            `SELECT i.*, c.name as customer_name, c.phone as customer_phone, c.email as customer_email, c.address as customer_address, c.nic as customer_nic
              FROM issues i
              JOIN customers c ON i.customer_id = c.id
              WHERE i.id = ?`,

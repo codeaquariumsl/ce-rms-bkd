@@ -125,7 +125,11 @@ exports.logDamage = async (req, res) => {
 // POST /api/inventory
 exports.createInventoryItem = async (req, res) => {
     try {
-        const { org_id, name, sku, barcode, category, rental_rate_per_day, description } = req.body;
+        const { 
+            org_id, name, sku, barcode, category, category_id, 
+            rental_rate_per_day, rental_rate_per_week, rental_rate_per_month, 
+            description 
+        } = req.body;
 
         if (!org_id || !name || !sku || !barcode || !rental_rate_per_day) {
             return res.status(400).json({ error: 'Missing required fields: org_id, name, sku, barcode, rental_rate_per_day' });
@@ -133,10 +137,15 @@ exports.createInventoryItem = async (req, res) => {
 
         const result = await query(
             `INSERT INTO inventory_items
-             (organization_id, name, sku, barcode, category, rental_rate_per_day, description,
+             (organization_id, name, sku, barcode, category_id, category, 
+              rental_rate_per_day, rental_rate_per_week, rental_rate_per_month, description,
               status, quantity_total, quantity_available, quantity_reserved, quantity_delivered, quantity_damaged)
-             VALUES (?, ?, ?, ?, ?, ?, ?, 'Available', 1, 1, 0, 0, 0)`,
-            [org_id, name, sku, barcode, category || null, rental_rate_per_day, description || null]
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Available', 1, 1, 0, 0, 0)`,
+            [
+                org_id, name, sku, barcode, category_id || null, category || null, 
+                rental_rate_per_day, rental_rate_per_week || null, rental_rate_per_month || null, 
+                description || null
+            ]
         );
 
         const newItem = await queryOne('SELECT * FROM inventory_items WHERE id = ?', [result.insertId]);
@@ -151,7 +160,7 @@ exports.updateInventoryItem = async (req, res) => {
     try {
         const { id } = req.params;
         const allowed = [
-            'name', 'description', 'category', 'rental_rate_per_day',
+            'name', 'description', 'category_id', 'category', 'sku', 'rental_rate_per_day',
             'rental_rate_per_week', 'rental_rate_per_month', 'status', 'quantity_total'
         ];
 
