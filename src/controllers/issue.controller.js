@@ -78,7 +78,8 @@ exports.createIssue = async (req, res) => {
             payment_status,
             notes,
             booking_id,
-            created_by
+            created_by,
+            issue_address
         } = req.body;
 
         if (!org_id || !customer_id || !items?.length || !issue_date || !return_date) {
@@ -163,9 +164,9 @@ exports.createIssue = async (req, res) => {
         const issueNumber = `CE26${String(nextNum).padStart(4, '0')}`;
         const [issueResult] = await connection.execute(
             `INSERT INTO issues
-             (organization_id, customer_id, issue_number, booking_id, status, issue_date, return_date, payment_status, notes, created_by)
-             VALUES (?, ?, ?, ?, 'Issued', ?, ?, ?, ?, ?)`,
-            [org_id, customer_id, issueNumber, booking_id || null, issue_date, return_date, payment_status || 'unpaid', notes || null, created_by || null]
+             (organization_id, customer_id, issue_number, booking_id, status, issue_date, return_date, payment_status, notes, created_by, issue_address)
+             VALUES (?, ?, ?, ?, 'Issued', ?, ?, ?, ?, ?, ?)`,
+            [org_id, customer_id, issueNumber, booking_id || null, issue_date, return_date, payment_status || 'unpaid', notes || null, created_by || null, issue_address || null]
         );
         const issueId = issueResult.insertId;
 
