@@ -21,7 +21,7 @@ exports.getCustomers = async (req, res) => {
 
 exports.createCustomer = async (req, res) => {
     try {
-        const { org_id, nic, name, phone, email, address, city, country } = req.body;
+        const { org_id, nic, name, phone, email, address, city, country, photo } = req.body;
 
         if (!org_id || !name || !phone || !nic) {
             return res.status(400).json({ error: "NIC, Name and phone are required" });
@@ -29,9 +29,9 @@ exports.createCustomer = async (req, res) => {
 
         const result = await query(
             `INSERT INTO customers 
-             (organization_id, nic, name, phone, email, address, city, country)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-            [org_id, nic, name, phone, email, address, city, country]
+             (organization_id, nic, name, phone, email, address, city, country, photo)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+            [org_id, nic, name, phone, email, address, city, country, photo || null]
         );
 
         const newCustomer = await queryOne("SELECT * FROM customers WHERE id = ?", [result.insertId]);
