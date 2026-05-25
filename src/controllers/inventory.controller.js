@@ -128,23 +128,26 @@ exports.createInventoryItem = async (req, res) => {
         const { 
             org_id, name, sku, barcode, category, category_id, 
             rental_rate_per_day, rental_rate_per_week, rental_rate_per_month, 
-            description 
+            description, is_have_serial, quantity_total
         } = req.body;
 
         if (!org_id || !name || !sku || !barcode || !rental_rate_per_day) {
             return res.status(400).json({ error: 'Missing required fields: org_id, name, sku, barcode, rental_rate_per_day' });
         }
 
+        const isHaveSerialVal = is_have_serial ? 1 : 0;
+        const totalQty = quantity_total !== undefined ? parseInt(quantity_total, 10) : 1;
+
         const result = await query(
             `INSERT INTO inventory_items
              (organization_id, name, sku, barcode, category_id, category, 
               rental_rate_per_day, rental_rate_per_week, rental_rate_per_month, description,
-              status, quantity_total, quantity_available, quantity_reserved, quantity_delivered, quantity_damaged)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Available', 1, 1, 0, 0, 0)`,
+              status, quantity_total, quantity_available, quantity_reserved, quantity_delivered, quantity_damaged, is_have_serial)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'Available', ?, ?, 0, 0, 0, ?)`,
             [
                 org_id, name, sku, barcode, category_id || null, category || null, 
                 rental_rate_per_day, rental_rate_per_week || null, rental_rate_per_month || null, 
-                description || null
+                description || null, totalQty, totalQty, isHaveSerialVal
             ]
         );
 
@@ -161,7 +164,8 @@ exports.updateInventoryItem = async (req, res) => {
         const { id } = req.params;
         const allowed = [
             'name', 'description', 'category_id', 'category', 'sku', 'rental_rate_per_day',
-            'rental_rate_per_week', 'rental_rate_per_month', 'status', 'quantity_total'
+            'rental_rate_per_week', 'rental_rate_per_month', 'status', 'quantity_total',
+            'quantity_available', 'is_have_serial'
         ];
 
         const updates = [];
@@ -170,7 +174,12 @@ exports.updateInventoryItem = async (req, res) => {
         allowed.forEach(field => {
             if (req.body[field] !== undefined) {
                 updates.push(`${field} = ?`);
-                values.push(req.body[field]);
+                // convert boolean to tinyint for DB
+                if (field === 'is_have_serial') {
+                    values.push(req.body[field] ? 1 : 0);
+                } else {
+                    values.push(req.body[field]);
+                }
             }
         });
 

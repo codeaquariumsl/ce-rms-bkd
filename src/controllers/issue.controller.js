@@ -241,7 +241,7 @@ exports.updateIssueStatus = async (req, res) => {
 
     try {
         const { id } = req.params;
-        const { status, return_date, payment_status, damage_notes } = req.body;
+        const { status, return_date, payment_status, payment_type, damage_notes } = req.body;
 
         if (!status) return res.status(400).json({ error: 'Status is required' });
 
@@ -307,6 +307,7 @@ exports.updateIssueStatus = async (req, res) => {
         let returnDateToUpdate = issue.return_date;
         let totalAmountToUpdate = issue.total_amount;
         let paymentStatusToUpdate = payment_status || issue.payment_status;
+        let paymentTypeToUpdate = payment_type !== undefined ? payment_type : issue.payment_type;
 
         // If returning, we update dates and recalculate price
         if (isReturnedStatus && return_date) {
@@ -327,8 +328,8 @@ exports.updateIssueStatus = async (req, res) => {
         }
 
         await connection.execute(
-            'UPDATE issues SET status = ?, return_date = ?, total_amount = ?, payment_status = ? WHERE id = ?',
-            [status, returnDateToUpdate, totalAmountToUpdate, paymentStatusToUpdate, id]
+            'UPDATE issues SET status = ?, return_date = ?, total_amount = ?, payment_status = ?, payment_type = ? WHERE id = ?',
+            [status, returnDateToUpdate, totalAmountToUpdate, paymentStatusToUpdate, paymentTypeToUpdate, id]
         );
 
         await connection.commit();
@@ -339,7 +340,8 @@ exports.updateIssueStatus = async (req, res) => {
                 status,
                 return_date: returnDateToUpdate,
                 total_amount: totalAmountToUpdate,
-                payment_status: paymentStatusToUpdate
+                payment_status: paymentStatusToUpdate,
+                payment_type: paymentTypeToUpdate
             }
         });
     } catch (error) {
