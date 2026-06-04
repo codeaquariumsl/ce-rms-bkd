@@ -235,3 +235,186 @@ exports.getCustomerIssuesReport = async (req, res) => {
     }
 };
 
+// GET /api/reports/daily-issues
+exports.getDailyIssueSummary = async (req, res) => {
+    try {
+        const { org_id } = req.query;
+        if (!org_id) return res.status(400).json({ error: 'Organization ID is required' });
+
+        const report = await query(
+            `SELECT 
+                DATE_FORMAT(i.issue_date, '%Y-%m-%d') as issue_date,
+                ii.name as item_name,
+                ii.category as item_category,
+                SUM(itm.quantity) as total_quantity,
+                SUM(itm.price * itm.quantity * COALESCE(NULLIF(DATEDIFF(i.return_date, i.issue_date), 0), 1)) as total_revenue
+             FROM issues i
+             JOIN issue_items itm ON i.id = itm.issue_id
+             JOIN inventory_items ii ON itm.inventory_item_id = ii.id
+             WHERE i.organization_id = ?
+             GROUP BY i.issue_date, ii.id
+             ORDER BY i.issue_date DESC, total_quantity DESC`,
+            [org_id]
+        );
+
+        const summary = {
+            total_items_issued: report.reduce((s, r) => s + (parseInt(r.total_quantity) || 0), 0),
+            total_estimated_revenue: report.reduce((s, r) => s + (parseFloat(r.total_revenue) || 0), 0)
+        };
+
+        res.json({ data: report, summary });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// GET /api/reports/daily-returns
+exports.getDailyReturnSummary = async (req, res) => {
+    try {
+        const { org_id } = req.query;
+        if (!org_id) return res.status(400).json({ error: 'Organization ID is required' });
+
+        const report = await query(
+            `SELECT 
+                DATE_FORMAT(i.return_date, '%Y-%m-%d') as return_date,
+                ii.name as item_name,
+                ii.category as item_category,
+                i.status as condition_status,
+                SUM(itm.quantity) as total_quantity
+             FROM issues i
+             JOIN issue_items itm ON i.id = itm.issue_id
+             JOIN inventory_items ii ON itm.inventory_item_id = ii.id
+             WHERE i.organization_id = ?
+               AND i.status IN ('Returned', 'Returned Damaged')
+             GROUP BY i.return_date, ii.id, i.status
+             ORDER BY i.return_date DESC, total_quantity DESC`,
+            [org_id]
+        );
+
+        const summary = {
+            total_returned: report.reduce((s, r) => s + (parseInt(r.total_quantity) || 0), 0),
+            returned_good: report.filter(r => r.condition_status === 'Returned').reduce((s, r) => s + (parseInt(r.total_quantity) || 0), 0),
+            returned_damaged: report.filter(r => r.condition_status === 'Returned Damaged').reduce((s, r) => s + (parseInt(r.total_quantity) || 0), 0)
+        };
+
+        res.json({ data: report, summary });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// GET /api/reports/daily-payments
+exports.getDailyPaymentSummary = async (req, res) => {
+    try {
+        const { org_id } = req.query;
+        if (!org_id) return res.status(400).json({ error: 'Organization ID is required' });
+
+        const report = await query(
+            `SELECT 
+                DATE_FORMAT(COALESCE(i.return_date, i.issue_date), '%Y-%m-%d') as payment_date,
+                COALESCE(i.payment_type, 'Cash') as payment_method,
+                COUNT(i.id) as transactions_count,
+                SUM(i.total_amount) as total_amount
+             FROM issues i
+             WHERE i.organization_id = ?
+               AND i.payment_status = 'paid'
+             GROUP BY payment_date, payment_method
+             ORDER BY payment_date DESC, total_amount DESC`,
+            [org_id]
+        );
+
+        const summary = {
+            total_transactions: report.reduce((s, r) => s + (parseInt(r.transactions_count) || 0), 0),
+            total_collected: report.reduce((s, r) => s + (parseFloat(r.total_amount) || 0), 0),
+            cash_collection: report.filter(r => r.payment_method === 'Cash').reduce((s, r) => s + (parseFloat(r.total_amount) || 0), 0),
+            credit_collection: report.filter(r => r.payment_method === 'Credit').reduce((s, r) => s + (parseFloat(r.total_amount) || 0), 0)
+        };
+
+        res.json({ data: report, summary });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// GET /api/reports/monthly-collections
+exports.getMonthlyCollectionReport = async (req, res) => {
+    try {
+        const { org_id } = req.query;
+        if (!org_id) return res.status(400).json({ error: 'Organization ID is required' });
+
+        const report = await query(
+            `SELECT 
+                DATE_FORMAT(COALESCE(i.return_date, i.issue_date), '%Y-%m') as month,
+                COALESCE(i.payment_type, 'Cash') as payment_method,
+                COUNT(i.id) as transactions_count,
+                SUM(i.total_amount) as collection_amount
+             FROM issues i
+             WHERE i.organization_id = ?
+               AND i.payment_status = 'paid'
+             GROUP BY month, payment_method
+             ORDER BY month DESC, collection_amount DESC`,
+            [org_id]
+        );
+
+        const summary = {
+            total_collected: report.reduce((s, r) => s + (parseFloat(r.collection_amount) || 0), 0),
+            cash_total: report.filter(r => r.payment_method === 'Cash').reduce((s, r) => s + (parseFloat(r.collection_amount) || 0), 0),
+            credit_total: report.filter(r => r.payment_method === 'Credit').reduce((s, r) => s + (parseFloat(r.collection_amount) || 0), 0)
+        };
+
+        res.json({ data: report, summary });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// GET /api/reports/current-stock
+exports.getCurrentStockReport = async (req, res) => {
+    try {
+        const { org_id } = req.query;
+        if (!org_id) return res.status(400).json({ error: 'Organization ID is required' });
+
+        const report = await query(
+            `SELECT 
+                ii.id, ii.name, ii.sku, ii.category, 
+                ii.quantity_total, ii.quantity_available, ii.quantity_reserved, ii.quantity_delivered, ii.quantity_damaged,
+                ii.is_have_serial,
+                (SELECT JSON_ARRAYAGG(JSON_OBJECT('id', sn.id, 'serial_code', sn.serial_code, 'status', sn.status))
+                 FROM serial_numbers sn
+                 WHERE sn.inventory_item_id = ii.id) as serials
+             FROM inventory_items ii
+             WHERE ii.organization_id = ?
+             ORDER BY ii.name ASC`,
+            [org_id]
+        );
+
+        // Parse serialized fields from database back to JSON objects (some drivers return strings)
+        const parsedReport = report.map(item => {
+            let parsedSerials = [];
+            if (item.serials) {
+                try {
+                    parsedSerials = typeof item.serials === 'string' ? JSON.parse(item.serials) : item.serials;
+                } catch (e) {
+                    console.error("Failed to parse serial numbers:", e);
+                }
+            }
+            return {
+                ...item,
+                serials: parsedSerials
+            };
+        });
+
+        const summary = {
+            total_items: parsedReport.length,
+            total_stock_value: parsedReport.reduce((s, r) => s + (r.quantity_total || 0), 0),
+            total_available: parsedReport.reduce((s, r) => s + (r.quantity_available || 0), 0),
+            total_delivered: parsedReport.reduce((s, r) => s + (r.quantity_delivered || 0), 0),
+            total_damaged: parsedReport.reduce((s, r) => s + (r.quantity_damaged || 0), 0)
+        };
+
+        res.json({ data: parsedReport, summary });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
