@@ -151,7 +151,16 @@ exports.createInventoryItem = async (req, res) => {
             ]
         );
 
-        const newItem = await queryOne('SELECT * FROM inventory_items WHERE id = ?', [result.insertId]);
+        const newItemId = result.insertId;
+
+        // Log the first record for new item creation
+        await query(
+            `INSERT INTO inventory_qty_logs (inventory_item_id, qty, in_out, datetime)
+             VALUES (?, ?, 'in', CURRENT_TIMESTAMP)`,
+            [newItemId, totalQty]
+        );
+
+        const newItem = await queryOne('SELECT * FROM inventory_items WHERE id = ?', [newItemId]);
         res.status(201).json({ data: newItem });
     } catch (error) {
         res.status(500).json({ error: error.message });
@@ -162,6 +171,55 @@ exports.createInventoryItem = async (req, res) => {
 exports.updateInventoryItem = async (req, res) => {
     try {
         const { id } = req.params;
+
+        // Fetch current inventory item to calculate changes if quantity_total is modified
+        const existingItem = await queryOne('SELECT * FROM inventory_items WHERE id = ?', [id]);
+        if (!existingItem) return res.status(404).json({ error: 'Inventory item not found' });
+
+        const { quantity_change, in_out } = req.body;
+        let calculatedQuantityTotal = req.body.quantity_total;
+        let calculatedQuantityAvailable = req.body.quantity_available;
+
+        // If explicitly passing quantity_change and in_out, compute new quantity_total and quantity_available
+        if (quantity_change !== undefined && in_out !== undefined) {
+            const changeVal = parseInt(quantity_change, 10);
+            if (changeVal > 0) {
+                if (in_out === 'in') {
+                    calculatedQuantityTotal = existingItem.quantity_total + changeVal;
+                    calculatedQuantityAvailable = existingItem.quantity_available + changeVal;
+                } else if (in_out === 'out') {
+                    calculatedQuantityTotal = Math.max(0, existingItem.quantity_total - changeVal);
+                    calculatedQuantityAvailable = Math.max(0, existingItem.quantity_available - changeVal);
+                }
+
+                // Write log entry
+                await query(
+                    `INSERT INTO inventory_qty_logs (inventory_item_id, qty, in_out, datetime)
+                     VALUES (?, ?, ?, CURRENT_TIMESTAMP)`,
+                    [id, changeVal, in_out]
+                );
+            }
+        } else if (calculatedQuantityTotal !== undefined) {
+            // Fallback: if quantity_total is edited directly without explicit change/direction parameters
+            const newQty = parseInt(calculatedQuantityTotal, 10);
+            const diff = newQty - existingItem.quantity_total;
+            if (diff !== 0) {
+                const qtyVal = Math.abs(diff);
+                const direction = diff > 0 ? 'in' : 'out';
+
+                if (calculatedQuantityAvailable === undefined) {
+                    calculatedQuantityAvailable = Math.max(0, existingItem.quantity_available + diff);
+                }
+
+                // Write log entry
+                await query(
+                    `INSERT INTO inventory_qty_logs (inventory_item_id, qty, in_out, datetime)
+                     VALUES (?, ?, ?, CURRENT_TIMESTAMP)`,
+                    [id, qtyVal, direction]
+                );
+            }
+        }
+
         const allowed = [
             'name', 'description', 'category_id', 'category', 'sku', 'rental_rate_per_day',
             'rental_rate_per_week', 'rental_rate_per_month', 'status', 'quantity_total',
@@ -171,14 +229,25 @@ exports.updateInventoryItem = async (req, res) => {
         const updates = [];
         const values = [];
 
+        // Apply any overrides from our calculations
+        const bodyWithOverrides = {
+            ...req.body,
+        };
+        if (calculatedQuantityTotal !== undefined) {
+            bodyWithOverrides.quantity_total = calculatedQuantityTotal;
+        }
+        if (calculatedQuantityAvailable !== undefined) {
+            bodyWithOverrides.quantity_available = calculatedQuantityAvailable;
+        }
+
         allowed.forEach(field => {
-            if (req.body[field] !== undefined) {
+            if (bodyWithOverrides[field] !== undefined) {
                 updates.push(`${field} = ?`);
                 // convert boolean to tinyint for DB
                 if (field === 'is_have_serial') {
-                    values.push(req.body[field] ? 1 : 0);
+                    values.push(bodyWithOverrides[field] ? 1 : 0);
                 } else {
-                    values.push(req.body[field]);
+                    values.push(bodyWithOverrides[field]);
                 }
             }
         });

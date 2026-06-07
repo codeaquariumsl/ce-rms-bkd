@@ -40,3 +40,34 @@ exports.createCustomer = async (req, res) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+exports.updateCustomer = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const allowed = ['nic', 'name', 'phone', 'email', 'address', 'city', 'country', 'photo'];
+        const updates = [];
+        const values = [];
+
+        allowed.forEach(field => {
+            if (req.body[field] !== undefined) {
+                updates.push(`${field} = ?`);
+                values.push(req.body[field]);
+            }
+        });
+
+        if (updates.length === 0) return res.status(400).json({ error: 'No fields to update' });
+
+        values.push(id);
+        const result = await query(
+            `UPDATE customers SET ${updates.join(', ')}, updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+            values
+        );
+
+        if (result.affectedRows === 0) return res.status(404).json({ error: 'Customer not found' });
+
+        const updated = await queryOne('SELECT * FROM customers WHERE id = ?', [id]);
+        res.json({ data: updated });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
+};

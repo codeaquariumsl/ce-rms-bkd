@@ -39,23 +39,29 @@ exports.saveItemSerials = async (req, res) => {
             );
         }
 
-        // 3. Update inventory_item totals
+        // 3. Update inventory_item totals only if item is serial-tracked
+        const [items] = await connection.query("SELECT is_have_serial FROM inventory_items WHERE id = ?", [itemId]);
+        const isHaveSerial = items && items[0] && items[0].is_have_serial;
+
         const total = serials.length;
         const available = serials.filter(s => s.status === 'Available' || !s.status).length;
-        const reserved = serials.filter(s => s.status === 'Reserved').length;
-        const delivered = serials.filter(s => s.status === 'Delivered').length;
-        const damaged = serials.filter(s => s.status === 'Damaged').length;
 
-        await connection.query(
-            `UPDATE inventory_items 
-             SET quantity_total = ?, 
-                 quantity_available = ?, 
-                 quantity_reserved = ?, 
-                 quantity_delivered = ?, 
-                 quantity_damaged = ? 
-             WHERE id = ?`,
-            [total, available, reserved, delivered, damaged, itemId]
-        );
+        if (isHaveSerial) {
+            const reserved = serials.filter(s => s.status === 'Reserved').length;
+            const delivered = serials.filter(s => s.status === 'Delivered').length;
+            const damaged = serials.filter(s => s.status === 'Damaged').length;
+
+            await connection.query(
+                `UPDATE inventory_items 
+                 SET quantity_total = ?, 
+                     quantity_available = ?, 
+                     quantity_reserved = ?, 
+                     quantity_delivered = ?, 
+                     quantity_damaged = ? 
+                 WHERE id = ?`,
+                [total, available, reserved, delivered, damaged, itemId]
+            );
+        }
 
         await connection.commit();
         res.json({ message: "Serials saved successfully", total, available });
