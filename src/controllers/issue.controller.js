@@ -27,6 +27,35 @@ exports.getIssues = async (req, res) => {
              ORDER BY i.issue_date DESC`,
             [org_id]
         );
+
+        if (issues.length > 0) {
+            const issueIds = issues.map(i => i.id);
+            const placeholders = issueIds.map(() => '?').join(',');
+            const allItems = await query(
+                `SELECT ii.*, inv.name, inv.sku, inv.barcode,
+                    (SELECT JSON_ARRAYAGG(sn.serial_code)
+                     FROM issue_item_serials iis
+                     JOIN serial_numbers sn ON iis.serial_number_id = sn.id
+                     WHERE iis.issue_item_id = ii.id) as serial_codes
+                 FROM issue_items ii
+                 JOIN inventory_items inv ON ii.inventory_item_id = inv.id
+                 WHERE ii.issue_id IN (${placeholders})`,
+                issueIds
+            );
+
+            const itemsByIssueId = {};
+            for (const item of allItems) {
+                if (!itemsByIssueId[item.issue_id]) {
+                    itemsByIssueId[item.issue_id] = [];
+                }
+                itemsByIssueId[item.issue_id].push(item);
+            }
+
+            for (const issue of issues) {
+                issue.items = itemsByIssueId[issue.id] || [];
+            }
+        }
+
         res.json({ data: issues });
     } catch (error) {
         res.status(500).json({ error: error.message });
